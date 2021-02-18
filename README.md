@@ -1,4 +1,4 @@
-# gRPC Image Project
+# gRPC Img Project
 
 
 ##### Description
