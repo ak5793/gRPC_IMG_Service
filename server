@@ -1,0 +1,104 @@
+#!/usr/bin/env python3
+"""
+This is the implementation of the gRPC image service.
+"""
+import PIL.Image as Image
+import grpc
+import image_pb2
+import image_pb2_grpc
+import io
+import logging
+import numpy as np
+
+from concurrent import futures
+from typing import List
+from utils import img2bytes, get_cmd_args
+
+logger = logging.getLogger(__name__)
+
+_MAX_WORKERS = 16
+_MAX_CONCURRENT_RPCS = 8
+_MAX_METADATA_SIZE = 10
+_MAX_LENGTH = 10
+_MAX_FRAME_SIZE = 10
+_NO_LIMIT = True
+
+
+def serve():
+    """
+    Launches the gRPC service.
+    """
+    socket = '{}:{}'.format(args['host'], args['port'])
+    server = grpc.server(futures.ThreadPoolExecutor(max_workers=_MAX_WORKERS),
+                         maximum_concurrent_rpcs=_MAX_CONCURRENT_RPCS,
+                         options=[('grpc.max_send_message_length', -1 if _NO_LIMIT else _MAX_LENGTH),
+                                  ('grpc.max_receive_message_length', -1 if _NO_LIMIT else _MAX_LENGTH),
+                                  ('grpc.max_metadata_size', _MAX_METADATA_SIZE),
+                                  ("grpc.http2.max_frame_size", _MAX_FRAME_SIZE)])
+    image_pb2_grpc.add_ProtoImgServiceServicer_to_server(ProtoImgServicer(), server)
+    server.add_insecure_port(socket)
+    server.start()
+    logger.info("Server listening at {}.".format(socket))
+    server.wait_for_termination()
+
+
+class ImgService(image_pb2_grpc.ProtoImgServiceServicer):
+    """
+    Implements an image server with mean and rotation functionalities.
+    """
+
+
+    def rotate_img(self, request: image_pb2.ProtoImgRotateRequest, context) -> image_pb2.ProtoImg:
+        """
+        Rotates the provided image within an `ProtoImgRotateRequest`.
+        """
+        rotate_dict = {0: None, 1: 90, 2: 180, 3: 270}
+        img = Image.open(io.BytesIO(request.image.data))
+        width, height = img.size
+        degrees = rotate_dict[request.rotation]
+        if degrees in {90, 270}:  # Rotations by these magnitudes will transpose height and width.
+            height, width = width, height
+        rotated_img = img.rotate(degrees, expand=True)
+        return image_pb2.ProtoImg(color=request.image.color,
+                                  data=img2bytes(rotated_img, img.format).getvalue(),
+                                  width=width,
+                                  height=height)
+
+
+    def moving_avg_filter(self, request, context) -> image_pb2.ProtoImg:
+        """
+        Higher order function that blurs image.
+        """
+        img = Image.open(io.BytesIO(request.data))
+        width, height = img.size
+        pixels = img.load()
+
+
+        def get_pixel_neighborhood(_x: int, _y: int) -> List[int]:
+            """
+            Puts all neighboring pixels of (x, y) into an array.
+            """
+            neighborhood = []
+            for j in [-1, 0, 1]:
+                for i in [-1, 0, 1]:
+                    if (width > _x + i >= 0) and (height > _y + j >= 0):
+                        neighborhood.append(pixels[_x + i, y + j])
+            return neighborhood
+
+
+        for y in range(height):
+            for x in range(width):
+                _neighborhood = get_pixel_neighborhood(x, y)
+                mean_pixel = np.uint8(np.round(np.mean(_neighborhood, axis=0)))[:3]  # Drop 4th channel
+                img.putpixel((x, y), tuple(mean_pixel))
+
+        return image_pb2.ProtoImg(color=request.color,
+                                  data=img2bytes(img, img.format).getvalue(),
+                                  width=width,
+                                  height=height)
+
+
+if __name__ == '__main__':
+    args = get_cmd_args("service")
+    logging.basicConfig()
+    serve()

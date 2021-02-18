@@ -1,0 +1,4 @@
+#!/usr/bin/env bash
+echo "Building..."
+python3 -m grpc_tools.protoc -I=proto --python_out=$PWD --grpc_python_out=$PWD proto/image.proto
+echo "Built."

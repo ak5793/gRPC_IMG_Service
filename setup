@@ -1,0 +1,17 @@
+#!/usr/bin/env bash
+# Linux Setup
+set -ex
+sudo apt update
+sudo apt-get install build-essential autoconf libtool pkg-config automake git
+sudo apt-get install libgflags-dev libgtest-dev clang libc++-dev g++ curl make
+sudo apt install -y cmake
+
+# Python Setup
+yes | sudo apt install software-properties-common
+yes | sudo add-apt-repository ppa:deadsnakes/ppa
+sudo apt install python3.8
+
+# Protoc Setup
+pip3 install -r requirements.txt
+sudo chmod -R 777 ./*
+

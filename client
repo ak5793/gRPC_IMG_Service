@@ -1,0 +1,98 @@
+#!/usr/bin/env python3
+"""
+This is the implementation of the image service client
+"""
+import argparse
+import grpc
+import image_pb2
+import image_pb2_grpc
+import io
+import logging
+from PIL import UnidentifiedImageError, Image
+
+from utils import img2bytes, get_cmd_args, get_channel_diff, make_img
+
+logger = logging.getLogger(__name__)
+
+_MAX_METADATA_SIZE = 10
+_MAX_FRAME_SIZE = 1
+_MAX_LENGTH = 10
+_NO_LIMIT = True
+
+
+def make_rotate_request(rotation: str, img: image_pb2.ProtoImg) -> image_pb2.ProtoImgRotateRequest:
+    """
+    Creates an `ProtoImgRotateRequest` from the provided parameters.
+    """
+    return image_pb2.ProtoImgRotateRequest(rotation=rotation, image=img)
+
+
+def is_gray(img: Image, threshold: float = .01) -> bool:
+    """
+    Determines if the input image is grayscale or RGB.
+    """
+    width, height = img.size
+    if img.mode == 1:
+        return True
+    for x in range(width):
+        for y in range(height):
+            r, g, b = list(img.getpixel((x, y)))[:3]
+            rg_below_thresh = get_channel_diff(r, g) <= threshold
+            rb_below_thresh = get_channel_diff(r, b) <= threshold
+            gb_below_thresh = get_channel_diff(g, b) <= threshold
+            if not (r == g == b) or not all([rg_below_thresh,
+                                             rb_below_thresh,
+                                             gb_below_thresh]):
+                return False
+    return True
+
+
+def send_request(end_point, request: image_pb2.ProtoImg) -> Image:
+    """Serves both the rotation and mean flags."""
+    response = end_point(request)
+    return Image.open(io.BytesIO(response.data))
+
+
+def run():
+    logger.info("Launching client...")
+    socket = '{}:{}'.format(args["host"], args["port"])
+    logger.info("Client listening on: {}".format(socket))
+    with grpc.insecure_channel(socket, options=[('grpc.max_send_message_length', -1 if _NO_LIMIT else _MAX_LENGTH),
+                                                ('grpc.max_receive_message_length', -1 if _NO_LIMIT else _MAX_LENGTH),
+                                                ('grpc.max_metadata_size', _MAX_METADATA_SIZE),
+                                                ("grpc.http2.max_frame_size", _MAX_FRAME_SIZE)], ) as channel:
+
+        stub = image_pb2_grpc.ProtoImgServiceStub(channel)
+
+        try:
+            logger.info("Reading the image...")
+            img = Image.open(args['input'])
+        except (FileNotFoundError, UnidentifiedImageError) as e:
+            logging.info("Error: {}".format(str(e)))
+            raise
+
+        width, height = img.size
+        nl_img = make_img(img, width, height)
+
+        if args["rotate"]:
+            logger.info("Rotating the image...")
+            request = make_rotate_request(args["rotate"], nl_img)
+            response = send_request(stub.RotateImage, request)
+            byte_io_str = img2bytes(response, img.format)
+            nl_img = make_img(response, width, height)
+            logger.info("Image rotated.")
+
+        if args["mean"]:
+            logger.info("Blurring the image...")
+            response = send_request(stub.MeanFilter, nl_img)
+            byte_io_str = img2bytes(response, img.format)
+            logger.info("Image blurred.")
+
+        processed_image = Image.open(byte_io_str)
+        processed_image.save(args["output"])
+
+
+if __name__ == '__main__':
+    logging.basicConfig()
+    args = get_cmd_args("client")
+    run()
