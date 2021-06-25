@@ -3,7 +3,7 @@
 
 ##### Description
 gRPC is an alternative to REST and runs on HTTP2, which is a newer, more efficient communication protocol than its 
-predecessor HTTP1. gRPC uses protocol buffers as its underlying message interchange format, allowing a client to call
+predecessor, HTTP1. gRPC uses protocol buffers as its underlying message interchange format, allowing a client to call
 service methods as if they were local.
 
 This project explores gRPC through an image service that transposes and blurs images.
